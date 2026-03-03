@@ -219,7 +219,9 @@ function collectMcpEnvVars(): string[] {
     const config = JSON.parse(fs.readFileSync(mcpJsonPath, 'utf-8'));
     const envVars: string[] = [];
     for (const server of Object.values(config.mcpServers || {})) {
-      for (const val of Object.values((server as { env?: Record<string, string> }).env || {})) {
+      for (const val of Object.values(
+        (server as { env?: Record<string, string> }).env || {},
+      )) {
         const match = (val as string).match(/^\$\{(.+)\}$/);
         if (match && !envVars.includes(match[1])) envVars.push(match[1]);
       }

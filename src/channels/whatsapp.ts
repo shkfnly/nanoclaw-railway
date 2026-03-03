@@ -104,7 +104,9 @@ export class WhatsAppChannel implements Channel {
       if (qr) {
         // On Railway, don't exit — pairing code was already requested above
         if (IS_RAILWAY) {
-          logger.info('QR received, waiting for pairing code authentication...');
+          logger.info(
+            'QR received, waiting for pairing code authentication...',
+          );
           return;
         }
         const msg =
