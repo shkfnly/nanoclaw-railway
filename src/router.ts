@@ -17,6 +17,32 @@ export function formatMessages(messages: NewMessage[]): string {
   return `<messages>\n${lines.join('\n')}\n</messages>`;
 }
 
+/**
+ * Format thread messages with recent channel activity as background context.
+ * The agent gets full thread conversation + awareness of recent channel messages.
+ */
+export function formatThreadWithContext(
+  threadMessages: NewMessage[],
+  recentChannelMessages: NewMessage[],
+): string {
+  // Filter out messages already in the thread to avoid duplicates
+  const threadIds = new Set(threadMessages.map((m) => m.id));
+  const contextOnly = recentChannelMessages.filter(
+    (m) => !threadIds.has(m.id),
+  );
+
+  let result = '';
+  if (contextOnly.length > 0) {
+    const contextLines = contextOnly.map(
+      (m) =>
+        `<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}">${escapeXml(m.content)}</message>`,
+    );
+    result += `<channel-context note="Recent channel activity for background awareness">\n${contextLines.join('\n')}\n</channel-context>\n`;
+  }
+  result += formatMessages(threadMessages);
+  return result;
+}
+
 export function stripInternalTags(text: string): string {
   return text.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
 }

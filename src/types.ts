@@ -51,6 +51,7 @@ export interface NewMessage {
   timestamp: string;
   is_from_me?: boolean;
   is_bot_message?: boolean;
+  thread_id?: string; // Slack thread_ts or equivalent thread identifier
 }
 
 export interface ScheduledTask {

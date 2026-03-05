@@ -31,6 +31,7 @@ import {
   getAllTasks,
   getMessagesSince,
   getNewMessages,
+  getThreadMessages,
   getRouterState,
   initDatabase,
   setRegisteredGroup,
@@ -42,7 +43,12 @@ import {
 import { GroupQueue } from './group-queue.js';
 import { resolveGroupFolderPath } from './group-folder.js';
 import { startIpcWatcher } from './ipc.js';
-import { findChannel, formatMessages, formatOutbound } from './router.js';
+import {
+  findChannel,
+  formatMessages,
+  formatOutbound,
+  formatThreadWithContext,
+} from './router.js';
 import { syncMcpOnStartup } from './mcp-installer.js';
 import { syncSkillsOnStartup } from './skill-installer.js';
 import { startSchedulerLoop } from './task-scheduler.js';
@@ -165,7 +171,18 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     if (!hasTrigger) return true;
   }
 
-  const prompt = formatMessages(missedMessages);
+  // If the latest message has a thread_id, use full thread as context
+  // plus recent channel activity for background awareness
+  const latestMsg = missedMessages[missedMessages.length - 1];
+  let prompt: string;
+  if (latestMsg.thread_id) {
+    const threadMsgs = getThreadMessages(chatJid, latestMsg.thread_id);
+    const recent = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME)
+      .slice(-5);
+    prompt = formatThreadWithContext(threadMsgs, recent);
+  } else {
+    prompt = formatMessages(missedMessages);
+  }
 
   // Advance cursor so the piping path in startMessageLoop won't re-fetch
   // these messages. Save the old cursor so we can roll back on error.
@@ -390,16 +407,31 @@ async function startMessageLoop(): Promise<void> {
             if (!hasTrigger) continue;
           }
 
-          // Pull all messages since lastAgentTimestamp so non-trigger
-          // context that accumulated between triggers is included.
-          const allPending = getMessagesSince(
-            chatJid,
-            lastAgentTimestamp[chatJid] || '',
-            ASSISTANT_NAME,
-          );
-          const messagesToSend =
-            allPending.length > 0 ? allPending : groupMessages;
-          const formatted = formatMessages(messagesToSend);
+          // Build context: if the latest message has a thread_id, use the
+          // full thread + recent channel activity. Otherwise fall back to
+          // all messages since last agent run.
+          const latestMsg = groupMessages[groupMessages.length - 1];
+          let messagesToSend: NewMessage[];
+          let formatted: string;
+          if (latestMsg.thread_id) {
+            const threadMsgs = getThreadMessages(chatJid, latestMsg.thread_id);
+            const recent = getMessagesSince(
+              chatJid,
+              lastAgentTimestamp[chatJid] || '',
+              ASSISTANT_NAME,
+            ).slice(-5);
+            messagesToSend = threadMsgs;
+            formatted = formatThreadWithContext(threadMsgs, recent);
+          } else {
+            const allPending = getMessagesSince(
+              chatJid,
+              lastAgentTimestamp[chatJid] || '',
+              ASSISTANT_NAME,
+            );
+            messagesToSend =
+              allPending.length > 0 ? allPending : groupMessages;
+            formatted = formatMessages(messagesToSend);
+          }
 
           if (queue.sendMessage(chatJid, formatted)) {
             logger.debug(
@@ -564,7 +596,6 @@ async function main(): Promise<void> {
         { jid: mainJid, name: mainName },
         'Auto-registered main group',
       );
-
     }
   }
 
@@ -586,7 +617,10 @@ async function main(): Promise<void> {
         else if (chat.jid.includes('@g.us')) prefix = 'wa';
         else continue; // skip non-group JIDs (gmail, solo chats, etc.)
 
-        const safeName = chat.name.replace(/[^a-zA-Z0-9-]/g, '-').toLowerCase().slice(0, 50);
+        const safeName = chat.name
+          .replace(/[^a-zA-Z0-9-]/g, '-')
+          .toLowerCase()
+          .slice(0, 50);
         const folderName = `${prefix}_${safeName}`;
         registerGroup(chat.jid, {
           name: chat.name,

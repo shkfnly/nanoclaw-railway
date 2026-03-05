@@ -23,6 +23,8 @@ export class TelegramChannel implements Channel {
   private bot: Bot | null = null;
   private opts: TelegramChannelOpts;
   private botToken: string;
+  // Track active thread per chat: chatId → message_id to reply to
+  private activeThread = new Map<string, number>();
 
   constructor(botToken: string, opts: TelegramChannelOpts) {
     this.botToken = botToken;
@@ -93,9 +95,30 @@ export class TelegramChannel implements Channel {
         }
       }
 
+      // Determine thread context.
+      // Use message_thread_id for forum topics, or the message_id for
+      // regular chats (bot will reply to this message to form a chain).
+      const forumThreadId = ctx.message.message_thread_id;
+      const threadId = forumThreadId
+        ? String(forumThreadId)
+        : String(ctx.message.message_id);
+
+      // Track so sendMessage can reply to this message
+      this.activeThread.set(
+        String(ctx.chat.id),
+        ctx.message.message_id,
+      );
+
       // Store chat metadata for discovery
-      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(chatJid, timestamp, chatName, 'telegram', isGroup);
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        chatName,
+        'telegram',
+        isGroup,
+      );
 
       // Only deliver full message for registered groups
       const group = this.opts.registeredGroups()[chatJid];
@@ -116,6 +139,7 @@ export class TelegramChannel implements Channel {
         content,
         timestamp,
         is_from_me: false,
+        thread_id: threadId,
       });
 
       logger.info(
@@ -138,8 +162,15 @@ export class TelegramChannel implements Channel {
         'Unknown';
       const caption = ctx.message.caption ? ` ${ctx.message.caption}` : '';
 
-      const isGroup = ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
-      this.opts.onChatMetadata(chatJid, timestamp, undefined, 'telegram', isGroup);
+      const isGroup =
+        ctx.chat.type === 'group' || ctx.chat.type === 'supergroup';
+      this.opts.onChatMetadata(
+        chatJid,
+        timestamp,
+        undefined,
+        'telegram',
+        isGroup,
+      );
       this.opts.onMessage(chatJid, {
         id: ctx.message.message_id.toString(),
         chat_jid: chatJid,
@@ -153,9 +184,7 @@ export class TelegramChannel implements Channel {
 
     this.bot.on('message:photo', (ctx) => storeNonText(ctx, '[Photo]'));
     this.bot.on('message:video', (ctx) => storeNonText(ctx, '[Video]'));
-    this.bot.on('message:voice', (ctx) =>
-      storeNonText(ctx, '[Voice message]'),
-    );
+    this.bot.on('message:voice', (ctx) => storeNonText(ctx, '[Voice message]'));
     this.bot.on('message:audio', (ctx) => storeNonText(ctx, '[Audio]'));
     this.bot.on('message:document', (ctx) => {
       const name = ctx.message.document?.file_name || 'file';
@@ -199,20 +228,30 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
+      const replyTo = this.activeThread.get(numericId);
 
       // Telegram has a 4096 character limit per message — split if needed
       const MAX_LENGTH = 4096;
+      const replyParams = replyTo
+        ? { reply_parameters: { message_id: replyTo } }
+        : {};
       if (text.length <= MAX_LENGTH) {
-        await this.bot.api.sendMessage(numericId, text);
+        await this.bot.api.sendMessage(numericId, text, replyParams);
       } else {
-        for (let i = 0; i < text.length; i += MAX_LENGTH) {
+        // Only reply to the first chunk; subsequent chunks are standalone
+        await this.bot.api.sendMessage(
+          numericId,
+          text.slice(0, MAX_LENGTH),
+          replyParams,
+        );
+        for (let i = MAX_LENGTH; i < text.length; i += MAX_LENGTH) {
           await this.bot.api.sendMessage(
             numericId,
             text.slice(i, i + MAX_LENGTH),
           );
         }
       }
-      logger.info({ jid, length: text.length }, 'Telegram message sent');
+      logger.info({ jid, length: text.length, replyTo }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
     }

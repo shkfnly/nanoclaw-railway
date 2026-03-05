@@ -30,6 +30,8 @@ export class DiscordChannel implements Channel {
   private client: Client | null = null;
   private opts: DiscordChannelOpts;
   private botToken: string;
+  // Track active thread per channel: channelId → threadId
+  private activeThread = new Map<string, string>();
 
   constructor(botToken: string, opts: DiscordChannelOpts) {
     this.botToken = botToken;
@@ -132,6 +134,19 @@ export class DiscordChannel implements Channel {
         }
       }
 
+      // Determine thread context.
+      // In Discord, threads are separate channels. If the message is in a
+      // thread, use the thread channel ID. For top-level messages, use the
+      // message ID (the bot will create a thread on it).
+      let threadId: string | undefined;
+      if (message.channel.isThread()) {
+        threadId = message.channelId;
+      } else {
+        threadId = message.id;
+        // Track so sendMessage can create a thread on this message
+        this.activeThread.set(channelId, message.id);
+      }
+
       // Store chat metadata for discovery
       const isGroup = message.guild !== null;
       this.opts.onChatMetadata(
@@ -161,6 +176,7 @@ export class DiscordChannel implements Channel {
         content,
         timestamp,
         is_from_me: false,
+        thread_id: threadId,
       });
 
       logger.info(
@@ -209,15 +225,32 @@ export class DiscordChannel implements Channel {
         return;
       }
 
-      const textChannel = channel as TextChannel;
+      // If there's an active thread for this channel, reply in that thread.
+      // The activeThread stores a message ID — we create a thread on it or
+      // reuse it if one was already created.
+      let targetChannel = channel as TextChannel;
+      const threadMessageId = this.activeThread.get(channelId);
+      if (threadMessageId && !channel.isThread()) {
+        try {
+          const msg = await targetChannel.messages.fetch(threadMessageId);
+          if (msg.thread) {
+            targetChannel = msg.thread as unknown as TextChannel;
+          } else {
+            const thread = await msg.startThread({ name: 'Reply' });
+            targetChannel = thread as unknown as TextChannel;
+          }
+        } catch {
+          // Failed to create/fetch thread, fall back to channel
+        }
+      }
 
       // Discord has a 2000 character limit per message — split if needed
       const MAX_LENGTH = 2000;
       if (text.length <= MAX_LENGTH) {
-        await textChannel.send(text);
+        await targetChannel.send(text);
       } else {
         for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await textChannel.send(text.slice(i, i + MAX_LENGTH));
+          await targetChannel.send(text.slice(i, i + MAX_LENGTH));
         }
       }
       logger.info({ jid, length: text.length }, 'Discord message sent');

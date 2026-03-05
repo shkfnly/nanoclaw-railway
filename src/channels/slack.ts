@@ -105,12 +105,15 @@ export class SlackChannel implements Channel {
           'unknown';
       }
 
-      // Track thread context for replies.
-      // If the user message is in a thread, reply in that thread.
-      // If it's a top-level message, start a new thread on it.
+      // Determine thread context.
+      // For threaded messages, thread_ts is the parent; for top-level, use msg.ts
+      // (the bot will create a thread on it).
+      const incomingThreadTs = (msg as GenericMessageEvent).thread_ts;
+      const threadId = incomingThreadTs || msg.ts;
+
+      // Track active thread per channel for outbound replies.
       if (!isBotMessage) {
-        const threadTs = (msg as GenericMessageEvent).thread_ts;
-        this.activeThread.set(msg.channel, threadTs || msg.ts);
+        this.activeThread.set(msg.channel, threadId);
       }
 
       // Translate Slack <@UBOTID> mentions into TRIGGER_PATTERN format.
@@ -136,6 +139,7 @@ export class SlackChannel implements Channel {
         timestamp,
         is_from_me: isBotMessage,
         is_bot_message: isBotMessage,
+        thread_id: threadId,
       });
     });
   }
@@ -194,10 +198,7 @@ export class SlackChannel implements Channel {
           });
         }
       }
-      logger.info(
-        { jid, length: text.length, threadTs },
-        'Slack message sent',
-      );
+      logger.info({ jid, length: text.length, threadTs }, 'Slack message sent');
     } catch (err) {
       this.outgoingQueue.push({ jid, text });
       logger.warn(
