@@ -5,162 +5,50 @@ description: Run initial NanoClaw setup. Use when user wants to install dependen
 
 # NanoClaw Setup
 
-Run setup steps automatically. Only pause when user action is required (channel authentication, configuration choices).
+Run setup steps automatically. Only pause when user action is required (channel authentication, configuration choices). Setup uses `bash setup.sh` for bootstrap, then `npx tsx setup/index.ts --step <name>` for all other steps. Steps emit structured status blocks to stdout. Verbose logs go to `logs/setup.log`.
 
 **Principle:** When something is broken or missing, fix it. Don't tell the user to go fix it themselves unless it genuinely requires their manual action (e.g. authenticating a channel, pasting a secret token). If a dependency is missing, install it. If a service won't start, diagnose and repair. Ask the user for permission when needed, then do the work.
 
 **UX Note:** Use `AskUserQuestion` for all user-facing questions.
 
-## Detect Deployment Mode
+## 0. Git & Fork Setup
 
-Check if this is a Railway deployment:
+Check the git remote configuration to ensure the user has a fork and upstream is configured.
 
+Run:
+- `git remote -v`
+
+**Case A — `origin` points to `qwibitai/nanoclaw` (user cloned directly):**
+
+The user cloned instead of forking. AskUserQuestion: "You cloned NanoClaw directly. We recommend forking so you can push your customizations. Would you like to set up a fork?"
+- Fork now (recommended) — walk them through it
+- Continue without fork — they'll only have local changes
+
+If fork: instruct the user to fork `qwibitai/nanoclaw` on GitHub (they need to do this in their browser), then ask them for their GitHub username. Run:
 ```bash
-grep -q 'IS_RAILWAY' src/config.ts && echo "RAILWAY" || echo "LOCAL"
+git remote rename origin upstream
+git remote add origin https://github.com/<their-username>/nanoclaw.git
+git push --force origin main
+```
+Verify with `git remote -v`.
+
+If continue without fork: add upstream so they can still pull updates:
+```bash
+git remote add upstream https://github.com/qwibitai/nanoclaw.git
 ```
 
-Also check for `railway.json` or `Dockerfile.railway` in the project root.
+**Case B — `origin` points to user's fork, no `upstream` remote:**
 
-- **If RAILWAY** → Follow the **Railway path** below (skip steps 1–3, 6–8 from the local path)
-- **If LOCAL** → Follow the **Local path** below
-
----
-
-# Railway Path
-
-This deployment runs on Railway — no Docker, no Apple Container, no launchd/systemd, no `setup.sh`. Node.js and dependencies are handled by the Dockerfile at build time. Locally, just run `npm install` if needed for development.
-
-## R1. Prerequisites — Railway CLI
-
-Check Railway CLI is installed and authenticated:
-
+Add upstream:
 ```bash
-railway --version
+git remote add upstream https://github.com/qwibitai/nanoclaw.git
 ```
 
-- **Not found:** Install Railway CLI: `npm install -g @railway/cli` (or `brew install railway` on macOS)
-- **Installed:** Check auth: `railway whoami`
-  - If not logged in: `railway login`
+**Case C — both `origin` (user's fork) and `upstream` (qwibitai) exist:**
 
-## R2. Link Project
+Already configured. Continue.
 
-Check if already linked:
-
-```bash
-railway status
-```
-
-If not linked, link to the Railway project:
-
-```bash
-railway link
-```
-
-If this is a new project (no Railway project exists yet), use `railway init` to create one, then `railway link`.
-
-If the service is not linked, list services with `railway service status --all` and link with `railway service link <name>`.
-
-## R3. Claude Authentication
-
-Check if credentials already exist in Railway:
-
-```bash
-railway variables | grep -E 'ANTHROPIC_API_KEY|CLAUDE_CODE_OAUTH_TOKEN'
-```
-
-If present, confirm with user: keep or reconfigure?
-
-If not present — AskUserQuestion: Claude subscription (Pro/Max) vs Anthropic API key?
-
-**Subscription:** Tell user to run `claude setup-token` in another terminal, copy the token. Set it in Railway:
-```bash
-railway variables set CLAUDE_CODE_OAUTH_TOKEN=<token>
-```
-
-**API key:** Set it in Railway:
-```bash
-railway variables set ANTHROPIC_API_KEY=<key>
-```
-
-## R4. Set Up Channels
-
-AskUserQuestion (multiSelect): Which messaging channels do you want to enable?
-- Slack (authenticates via Slack app with Socket Mode)
-- Telegram (authenticates via bot token from @BotFather)
-- WhatsApp (authenticates via QR code or pairing code)
-- Discord (authenticates via Discord bot token)
-
-**Delegate to each selected channel's own skill.** Each channel skill handles its own code installation, authentication, registration, and JID resolution.
-
-For each selected channel, invoke its skill:
-
-- **Slack:** Invoke `/add-slack`
-- **Telegram:** Invoke `/add-telegram`
-- **WhatsApp:** Invoke `/add-whatsapp`
-- **Discord:** Invoke `/add-discord`
-
-Each skill will:
-1. Install the channel code (via `apply-skill`)
-2. Collect credentials/tokens and write to `.env`
-3. Authenticate and verify connection
-4. Register the chat with the correct JID format
-5. Build and verify
-
-**After each channel skill completes, mirror its env vars to Railway.** Read the values from `.env` and set them:
-```bash
-# Example for Slack:
-railway variables set SLACK_BOT_TOKEN=xoxb-... SLACK_APP_TOKEN=xapp-...
-
-# Example for Telegram:
-railway variables set TELEGRAM_BOT_TOKEN=...
-```
-
-## R5. Deploy
-
-Deploy to Railway:
-
-```bash
-railway up
-```
-
-Wait for the deployment to complete.
-
-## R6. Verify
-
-Check logs to confirm the bot is running:
-
-```bash
-railway logs
-```
-
-Look for:
-- "NanoClaw running" — main process started
-- Channel connection messages (e.g. "Slack connected", "Telegram bot started")
-
-**If issues found:**
-- Missing credentials → re-run step R3 or re-invoke the channel skill, then `railway variables set` the values
-- Build errors → fix the code, `npm run build`, then `railway up` again
-- Channel not connecting → verify env vars are set in Railway: `railway variables`
-
-Tell user to test: send a message in their registered chat.
-
-## Railway Troubleshooting
-
-**Service not starting:** Check `railway logs`. Common: missing env vars (`railway variables` to check), missing channel credentials (re-invoke channel skill and mirror to Railway).
-
-**No response to messages:** Check trigger pattern. Main channel doesn't need prefix. Check `railway logs` for errors.
-
-**Channel not connecting:** Verify the channel's credentials are set in Railway env vars (`railway variables`). Channels auto-enable when their credentials are present. Redeploy with `railway up` after any env var change.
-
-**Redeploy:** `railway up`
-
-**Restart:** `railway restart`
-
----
-
-# Local Path
-
-Setup uses `bash setup.sh` for bootstrap, then `npx tsx setup/index.ts --step <name>` for all other steps. Steps emit structured status blocks to stdout. Verbose logs go to `logs/setup.log`.
+**Verify:** `git remote -v` should show `origin` → user's repo, `upstream` → `qwibitai/nanoclaw.git`.
 
 ## 1. Bootstrap (Node.js + Dependencies)
 
@@ -170,7 +58,7 @@ Run `bash setup.sh` and parse the status block.
   - macOS: `brew install node@22` (if brew available) or install nvm then `nvm install 22`
   - Linux: `curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash - && sudo apt-get install -y nodejs`, or nvm
   - After installing Node, re-run `bash setup.sh`
-- If DEPS_OK=false → Read `logs/setup.log`. Try: delete `node_modules` and `package-lock.json`, re-run `bash setup.sh`. If native module build fails, install build tools (`xcode-select --install` on macOS, `build-essential` on Linux), then retry.
+- If DEPS_OK=false → Read `logs/setup.log`. Try: delete `node_modules`, re-run `bash setup.sh`. If native module build fails, install build tools (`xcode-select --install` on macOS, `build-essential` on Linux), then retry.
 - If NATIVE_OK=false → better-sqlite3 failed to load. Install build tools and re-run.
 - Record PLATFORM and IS_WSL for later steps.
 
@@ -189,7 +77,7 @@ Run `npx tsx setup/index.ts --step environment` and parse the status block.
 Check the preflight results for `APPLE_CONTAINER` and `DOCKER`, and the PLATFORM from step 1.
 
 - PLATFORM=linux → Docker (only option)
-- PLATFORM=macos + APPLE_CONTAINER=installed → Use `AskUserQuestion: Docker (cross-platform) or Apple Container (native macOS)?` If Apple Container, run `/convert-to-apple-container` now, then skip to 4c.
+- PLATFORM=macos + APPLE_CONTAINER=installed → Use `AskUserQuestion: Docker (cross-platform) or Apple Container (native macOS)?` If Apple Container, run `/convert-to-apple-container` now, then skip to 3c.
 - PLATFORM=macos + APPLE_CONTAINER=not_found → Docker
 
 ### 3a-docker. Install Docker
@@ -210,9 +98,9 @@ grep -q "CONTAINER_RUNTIME_BIN = 'container'" src/container-runtime.ts && echo "
 
 **If NEEDS_CONVERSION**, the source code still uses Docker as the runtime. You MUST run the `/convert-to-apple-container` skill NOW, before proceeding to the build step.
 
-**If ALREADY_CONVERTED**, the code already uses Apple Container. Continue to 4c.
+**If ALREADY_CONVERTED**, the code already uses Apple Container. Continue to 3c.
 
-**If the chosen runtime is Docker**, no conversion is needed. Continue to 4c.
+**If the chosen runtime is Docker**, no conversion is needed. Continue to 3c.
 
 ### 3c. Build and test
 
@@ -252,13 +140,19 @@ For each selected channel, invoke its skill:
 - **Discord:** Invoke `/add-discord`
 
 Each skill will:
-1. Install the channel code (via `apply-skill`)
+1. Install the channel code (via `git merge` of the skill branch)
 2. Collect credentials/tokens and write to `.env`
 3. Authenticate (WhatsApp QR/pairing, or verify token-based connection)
 4. Register the chat with the correct JID format
 5. Build and verify
 
-**After all channel skills complete**, continue to step 6.
+**After all channel skills complete**, install dependencies and rebuild — channel merges may introduce new packages:
+
+```bash
+npm install && npm run build
+```
+
+If the build fails, read the error output and fix it (usually a missing dependency). Then continue to step 6.
 
 ## 6. Mount Allowlist
 
@@ -311,7 +205,7 @@ Run `npx tsx setup/index.ts --step verify` and parse the status block.
 
 Tell user to test: send a message in their registered chat. Show: `tail -f logs/nanoclaw.log`
 
-## Local Troubleshooting
+## Troubleshooting
 
 **Service not starting:** Check `logs/nanoclaw.error.log`. Common: wrong Node path (re-run step 7), missing `.env` (step 4), missing channel credentials (re-invoke channel skill).
 

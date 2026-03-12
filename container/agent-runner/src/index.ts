@@ -16,7 +16,7 @@
 
 import fs from 'fs';
 import path from 'path';
-import { query, HookCallback, PreCompactHookInput, PreToolUseHookInput } from '@anthropic-ai/claude-agent-sdk';
+import { query, HookCallback, PreCompactHookInput } from '@anthropic-ai/claude-agent-sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -27,7 +27,6 @@ interface ContainerInput {
   isMain: boolean;
   isScheduledTask?: boolean;
   assistantName?: string;
-  secrets?: Record<string, string>;
 }
 
 interface ContainerOutput {
@@ -55,12 +54,8 @@ interface SDKUserMessage {
   session_id: string;
 }
 
-const MCP_JSON_PATH = '/home/node/.claude/.mcp.json';
-const IPC_INPUT_DIR = process.env.NANOCLAW_IPC_INPUT || '/workspace/ipc/input';
+const IPC_INPUT_DIR = '/workspace/ipc/input';
 const IPC_INPUT_CLOSE_SENTINEL = path.join(IPC_INPUT_DIR, '_close');
-const WORKSPACE_GROUP = process.env.NANOCLAW_WORKSPACE_GROUP || '/workspace/group';
-const WORKSPACE_GLOBAL = process.env.NANOCLAW_WORKSPACE_GLOBAL || '/workspace/global';
-const WORKSPACE_EXTRA = process.env.NANOCLAW_WORKSPACE_EXTRA || '/workspace/extra';
 const IPC_POLL_MS = 500;
 
 /**
@@ -170,7 +165,7 @@ function createPreCompactHook(assistantName?: string): HookCallback {
       const summary = getSessionSummary(sessionId, transcriptPath);
       const name = summary ? sanitizeFilename(summary) : generateFallbackName();
 
-      const conversationsDir = path.join(WORKSPACE_GROUP, 'conversations');
+      const conversationsDir = '/workspace/group/conversations';
       fs.mkdirSync(conversationsDir, { recursive: true });
 
       const date = new Date().toISOString().split('T')[0];
@@ -186,34 +181,6 @@ function createPreCompactHook(assistantName?: string): HookCallback {
     }
 
     return {};
-  };
-}
-
-// Default secrets to strip from Bash tool subprocess environments.
-// Additional keys are passed dynamically via containerInput.secretKeyNames.
-const DEFAULT_SECRET_ENV_VARS = ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'];
-
-function createSanitizeBashHook(extraSecretKeys: string[] = []): HookCallback {
-  const allSecretKeys = [...new Set([
-    ...DEFAULT_SECRET_ENV_VARS,
-    ...extraSecretKeys,
-  ])];
-
-  return async (input, _toolUseId, _context) => {
-    const preInput = input as PreToolUseHookInput;
-    const command = (preInput.tool_input as { command?: string })?.command;
-    if (!command) return {};
-
-    const unsetPrefix = `unset ${allSecretKeys.join(' ')} 2>/dev/null; `;
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        updatedInput: {
-          ...(preInput.tool_input as Record<string, unknown>),
-          command: unsetPrefix + command,
-        },
-      },
-    };
   };
 }
 
@@ -399,31 +366,8 @@ async function runQuery(
   let messageCount = 0;
   let resultCount = 0;
 
-  // Load additional MCP servers from .mcp.json (synced from host)
-  const extraMcpServers: Record<string, { command: string; args: string[]; env: Record<string, string> }> = {};
-  const extraMcpToolPatterns: string[] = [];
-  if (fs.existsSync(MCP_JSON_PATH)) {
-    try {
-      const mcpJson = JSON.parse(fs.readFileSync(MCP_JSON_PATH, 'utf-8'));
-      for (const [name, config] of Object.entries(mcpJson.mcpServers || {})) {
-        const cfg = config as { command: string; args?: string[]; env?: Record<string, string> };
-        const resolvedEnv: Record<string, string> = {};
-        for (const [key, val] of Object.entries(cfg.env || {})) {
-          const match = val.match(/^\$\{(.+)\}$/);
-          if (match && sdkEnv[match[1]]) resolvedEnv[key] = sdkEnv[match[1]]!;
-          else if (!val.startsWith('${')) resolvedEnv[key] = val;
-        }
-        extraMcpServers[name] = { command: cfg.command, args: cfg.args || [], env: resolvedEnv };
-        extraMcpToolPatterns.push(`mcp__${name}__*`);
-        log(`MCP server from .mcp.json: ${name} (${cfg.command})`);
-      }
-    } catch (err) {
-      log(`Failed to read .mcp.json: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
   // Load global CLAUDE.md as additional system context (shared across all groups)
-  const globalClaudeMdPath = path.join(WORKSPACE_GLOBAL, 'CLAUDE.md');
+  const globalClaudeMdPath = '/workspace/global/CLAUDE.md';
   let globalClaudeMd: string | undefined;
   if (!containerInput.isMain && fs.existsSync(globalClaudeMdPath)) {
     globalClaudeMd = fs.readFileSync(globalClaudeMdPath, 'utf-8');
@@ -432,7 +376,7 @@ async function runQuery(
   // Discover additional directories mounted at /workspace/extra/*
   // These are passed to the SDK so their CLAUDE.md files are loaded automatically
   const extraDirs: string[] = [];
-  const extraBase = WORKSPACE_EXTRA;
+  const extraBase = '/workspace/extra';
   if (fs.existsSync(extraBase)) {
     for (const entry of fs.readdirSync(extraBase)) {
       const fullPath = path.join(extraBase, entry);
@@ -448,7 +392,7 @@ async function runQuery(
   for await (const message of query({
     prompt: stream,
     options: {
-      cwd: WORKSPACE_GROUP,
+      cwd: '/workspace/group',
       additionalDirectories: extraDirs.length > 0 ? extraDirs : undefined,
       resume: sessionId,
       resumeSessionAt: resumeAt,
@@ -463,8 +407,7 @@ async function runQuery(
         'TeamCreate', 'TeamDelete', 'SendMessage',
         'TodoWrite', 'ToolSearch', 'Skill',
         'NotebookEdit',
-        'mcp__nanoclaw__*',
-        ...extraMcpToolPatterns,
+        'mcp__nanoclaw__*'
       ],
       env: sdkEnv,
       permissionMode: 'bypassPermissions',
@@ -480,11 +423,9 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
-        ...extraMcpServers,
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
-        PreToolUse: [{ matcher: 'Bash', hooks: [createSanitizeBashHook((containerInput as unknown as Record<string, unknown>).secretKeyNames as string[] || [])] }],
       },
     }
   })) {
@@ -529,7 +470,6 @@ async function main(): Promise<void> {
   try {
     const stdinData = await readStdin();
     containerInput = JSON.parse(stdinData);
-    // Delete the temp file the entrypoint wrote — it contains secrets
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
   } catch (err) {
@@ -541,12 +481,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // Build SDK env: merge secrets into process.env for the SDK only.
-  // Secrets never touch process.env itself, so Bash subprocesses can't see them.
+  // Credentials are injected by the host's credential proxy via ANTHROPIC_BASE_URL.
+  // No real secrets exist in the container environment.
   const sdkEnv: Record<string, string | undefined> = { ...process.env };
-  for (const [key, value] of Object.entries(containerInput.secrets || {})) {
-    sdkEnv[key] = value;
-  }
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));
   const mcpServerPath = path.join(__dirname, 'ipc-mcp-stdio.js');
