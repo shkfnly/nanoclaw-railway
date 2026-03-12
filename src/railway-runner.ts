@@ -22,6 +22,7 @@ import {
   ContainerOutput,
   readSecrets,
 } from './container-runner.js';
+import { detectAuthMode } from './credential-proxy.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
@@ -174,7 +175,10 @@ export async function runRailwayAgent(
         RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT || '',
         // Route API traffic through the credential proxy (same as container-runner)
         ANTHROPIC_BASE_URL: `http://127.0.0.1:${CREDENTIAL_PROXY_PORT}`,
-        ANTHROPIC_API_KEY: 'placeholder',
+        // Mirror the host's auth method with a placeholder value
+        ...(detectAuthMode() === 'api-key'
+          ? { ANTHROPIC_API_KEY: 'placeholder' }
+          : { CLAUDE_CODE_OAUTH_TOKEN: 'placeholder' }),
       },
     });
 
