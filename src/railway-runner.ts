@@ -11,6 +11,7 @@ import {
   ASSISTANT_NAME,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
+  CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
@@ -171,6 +172,9 @@ export async function runRailwayAgent(
         LOG_LEVEL: process.env.LOG_LEVEL || '',
         NODE_ENV: process.env.NODE_ENV || '',
         RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT || '',
+        // Route API traffic through the credential proxy (same as container-runner)
+        ANTHROPIC_BASE_URL: `http://127.0.0.1:${CREDENTIAL_PROXY_PORT}`,
+        ANTHROPIC_API_KEY: 'placeholder',
       },
     });
 
