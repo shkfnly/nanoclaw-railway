@@ -8,6 +8,7 @@ import {
   IS_RAILWAY,
   POLL_INTERVAL,
   SLACK_MAIN_CHANNEL_ID,
+  DISCORD_MAIN_CHANNEL_ID,
   TIMEZONE,
   TRIGGER_PATTERN,
 } from './config.js';
@@ -191,8 +192,11 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   let prompt: string;
   if (latestMsg.thread_id) {
     const threadMsgs = getThreadMessages(chatJid, latestMsg.thread_id);
-    const recent = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME)
-      .slice(-5);
+    const recent = getMessagesSince(
+      chatJid,
+      sinceTimestamp,
+      ASSISTANT_NAME,
+    ).slice(-5);
     prompt = formatThreadWithContext(threadMsgs, recent, TIMEZONE);
   } else {
     prompt = formatMessages(missedMessages, TIMEZONE);
@@ -448,8 +452,7 @@ async function startMessageLoop(): Promise<void> {
               lastAgentTimestamp[chatJid] || '',
               ASSISTANT_NAME,
             );
-            messagesToSend =
-              allPending.length > 0 ? allPending : groupMessages;
+            messagesToSend = allPending.length > 0 ? allPending : groupMessages;
             formatted = formatMessages(messagesToSend, TIMEZONE);
           }
 
@@ -597,8 +600,15 @@ async function main(): Promise<void> {
     let mainJid: string | undefined;
     let mainName: string | undefined;
 
-    // Priority 1: SLACK_MAIN_CHANNEL_ID — directly register a Slack channel as main
-    if (SLACK_MAIN_CHANNEL_ID) {
+    // Priority 1: Channel-specific main channel ID
+    if (DISCORD_MAIN_CHANNEL_ID) {
+      mainJid = `dc:${DISCORD_MAIN_CHANNEL_ID}`;
+      mainName = ASSISTANT_NAME;
+      logger.info(
+        { channelId: DISCORD_MAIN_CHANNEL_ID },
+        'Using DISCORD_MAIN_CHANNEL_ID for main group',
+      );
+    } else if (SLACK_MAIN_CHANNEL_ID) {
       mainJid = `slack:${SLACK_MAIN_CHANNEL_ID}`;
       mainName = ASSISTANT_NAME;
       logger.info(
@@ -623,7 +633,7 @@ async function main(): Promise<void> {
           .slice(0, 20);
         logger.warn(
           { assistantName: ASSISTANT_NAME, availableChats: chatNames },
-          'No group matching ASSISTANT_NAME found. Set SLACK_MAIN_CHANNEL_ID, or create a group named after your bot, send a message, then restart.',
+          'No group matching ASSISTANT_NAME found. Set DISCORD_MAIN_CHANNEL_ID or SLACK_MAIN_CHANNEL_ID, or create a group named after your bot, send a message, then restart.',
         );
       }
     }

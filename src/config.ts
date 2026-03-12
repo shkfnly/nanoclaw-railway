@@ -10,6 +10,7 @@ const envConfig = readEnvFile([
   'ASSISTANT_NAME',
   'ASSISTANT_HAS_OWN_NUMBER',
   'SLACK_MAIN_CHANNEL_ID',
+  'DISCORD_MAIN_CHANNEL_ID',
 ]);
 
 export const ASSISTANT_NAME =
@@ -31,6 +32,10 @@ export const MAIN_GROUP_FOLDER = 'main';
 export const SLACK_BOT_TOKEN = process.env.SLACK_BOT_TOKEN || '';
 export const SLACK_MAIN_CHANNEL_ID =
   process.env.SLACK_MAIN_CHANNEL_ID || envConfig.SLACK_MAIN_CHANNEL_ID || '';
+export const DISCORD_MAIN_CHANNEL_ID =
+  process.env.DISCORD_MAIN_CHANNEL_ID ||
+  envConfig.DISCORD_MAIN_CHANNEL_ID ||
+  '';
 
 // Mount security: allowlist stored OUTSIDE project root, never mounted into containers
 export const MOUNT_ALLOWLIST_PATH = path.join(
