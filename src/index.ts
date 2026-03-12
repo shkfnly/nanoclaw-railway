@@ -193,7 +193,7 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
     const threadMsgs = getThreadMessages(chatJid, latestMsg.thread_id);
     const recent = getMessagesSince(chatJid, sinceTimestamp, ASSISTANT_NAME)
       .slice(-5);
-    prompt = formatThreadWithContext(threadMsgs, recent);
+    prompt = formatThreadWithContext(threadMsgs, recent, TIMEZONE);
   } else {
     prompt = formatMessages(missedMessages, TIMEZONE);
   }
@@ -439,7 +439,7 @@ async function startMessageLoop(): Promise<void> {
               ASSISTANT_NAME,
             ).slice(-5);
             messagesToSend = threadMsgs;
-            formatted = formatThreadWithContext(threadMsgs, recent);
+            formatted = formatThreadWithContext(threadMsgs, recent, TIMEZONE);
           } else {
             // Pull all messages since lastAgentTimestamp so non-trigger
             // context that accumulated between triggers is included.

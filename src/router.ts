@@ -31,6 +31,7 @@ export function formatMessages(
 export function formatThreadWithContext(
   threadMessages: NewMessage[],
   recentChannelMessages: NewMessage[],
+  timezone: string,
 ): string {
   // Filter out messages already in the thread to avoid duplicates
   const threadIds = new Set(threadMessages.map((m) => m.id));
@@ -46,7 +47,7 @@ export function formatThreadWithContext(
     );
     result += `<channel-context note="Recent channel activity for background awareness">\n${contextLines.join('\n')}\n</channel-context>\n`;
   }
-  result += formatMessages(threadMessages);
+  result += formatMessages(threadMessages, timezone);
   return result;
 }
 
