@@ -47,16 +47,31 @@ function prepareWorkspace(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  // Sync CLAUDE.md template from image to volume.
-  // Always overwrites if the image template exists — the repo is the source of truth
-  // for group memory and credentials. Set SKIP_CLAUDE_MD_SYNC=true to disable.
-  // On Railway, templates live at /app/groups/ but the volume is at /data/groups/
+  // Sync CLAUDE.md to volume. Priority order:
+  // 1. MAIN_GROUP_CLAUDE_MD env var (base64-encoded) — for credentials that can't go in git
+  // 2. Image template at /app/groups/{folder}/CLAUDE.md — always overwrites if present
+  // Set SKIP_CLAUDE_MD_SYNC=true to disable all syncing (after migration is complete).
   const templateGroupsDir = path.join(process.cwd(), 'groups');
   const skipSync = process.env.SKIP_CLAUDE_MD_SYNC === 'true';
+
+  // Handle MAIN_GROUP_CLAUDE_MD env var (base64-encoded CLAUDE.md for the main group)
+  // Credentials live here rather than in git. Unset after migration if desired.
+  if (!skipSync && group.folder === 'discord_main' && process.env.MAIN_GROUP_CLAUDE_MD) {
+    const targetDir = path.join(GROUPS_DIR, group.folder);
+    const targetMd = path.join(targetDir, 'CLAUDE.md');
+    fs.mkdirSync(targetDir, { recursive: true });
+    const content = Buffer.from(process.env.MAIN_GROUP_CLAUDE_MD, 'base64').toString('utf-8');
+    fs.writeFileSync(targetMd, content);
+    logger.info({ folder: group.folder, targetMd }, 'Wrote CLAUDE.md from MAIN_GROUP_CLAUDE_MD env var');
+  }
+
+  // Sync CLAUDE.md from image template (does not overwrite if env var already wrote it)
   for (const folder of [group.folder, 'global']) {
     const targetDir = path.join(GROUPS_DIR, folder);
     const targetMd = path.join(targetDir, 'CLAUDE.md');
     const templateMd = path.join(templateGroupsDir, folder, 'CLAUDE.md');
+    // Skip if already written from env var
+    if (folder === group.folder && process.env.MAIN_GROUP_CLAUDE_MD && !skipSync) continue;
     if (!skipSync && fs.existsSync(templateMd)) {
       fs.mkdirSync(targetDir, { recursive: true });
       let content = fs.readFileSync(templateMd, 'utf-8');
