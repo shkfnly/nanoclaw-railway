@@ -47,14 +47,17 @@ function prepareWorkspace(
   const groupDir = resolveGroupFolderPath(group.folder);
   fs.mkdirSync(groupDir, { recursive: true });
 
-  // Sync CLAUDE.md template from image to volume if missing
+  // Sync CLAUDE.md template from image to volume.
+  // Always overwrites if the image template exists — the repo is the source of truth
+  // for group memory and credentials. Set SKIP_CLAUDE_MD_SYNC=true to disable.
   // On Railway, templates live at /app/groups/ but the volume is at /data/groups/
   const templateGroupsDir = path.join(process.cwd(), 'groups');
+  const skipSync = process.env.SKIP_CLAUDE_MD_SYNC === 'true';
   for (const folder of [group.folder, 'global']) {
     const targetDir = path.join(GROUPS_DIR, folder);
     const targetMd = path.join(targetDir, 'CLAUDE.md');
     const templateMd = path.join(templateGroupsDir, folder, 'CLAUDE.md');
-    if (!fs.existsSync(targetMd) && fs.existsSync(templateMd)) {
+    if (!skipSync && fs.existsSync(templateMd)) {
       fs.mkdirSync(targetDir, { recursive: true });
       let content = fs.readFileSync(templateMd, 'utf-8');
       if (ASSISTANT_NAME !== 'Andy') {
@@ -63,6 +66,20 @@ function prepareWorkspace(
       }
       fs.writeFileSync(targetMd, content);
       logger.info({ folder, targetMd }, 'Synced CLAUDE.md template to volume');
+    }
+  }
+
+  // Sync conversations from image to volume (one-time migration, never overwrites)
+  const templateConvsDir = path.join(templateGroupsDir, group.folder, 'conversations');
+  if (fs.existsSync(templateConvsDir)) {
+    const targetConvsDir = path.join(GROUPS_DIR, group.folder, 'conversations');
+    fs.mkdirSync(targetConvsDir, { recursive: true });
+    for (const file of fs.readdirSync(templateConvsDir)) {
+      const dst = path.join(targetConvsDir, file);
+      if (!fs.existsSync(dst)) {
+        fs.copyFileSync(path.join(templateConvsDir, file), dst);
+        logger.info({ file }, 'Migrated conversation history to volume');
+      }
     }
   }
 
