@@ -57,12 +57,9 @@ export function readonlyMountArgs(
   return ['-v', `${hostPath}:${containerPath}:ro`];
 }
 
-/** Stop a container by name. Uses execFileSync to avoid shell injection. */
-export function stopContainer(name: string): void {
-  if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]*$/.test(name)) {
-    throw new Error(`Invalid container name: ${name}`);
-  }
-  execSync(`${CONTAINER_RUNTIME_BIN} stop -t 1 ${name}`, { stdio: 'pipe' });
+/** Returns the shell command to stop a container by name. */
+export function stopContainer(name: string): string {
+  return `${CONTAINER_RUNTIME_BIN} stop -t 1 ${name}`;
 }
 
 /** Ensure the container runtime is running, starting it if needed. */
@@ -99,9 +96,7 @@ export function ensureContainerRuntimeRunning(): void {
     console.error(
       '╚════════════════════════════════════════════════════════════════╝\n',
     );
-    throw new Error('Container runtime is required but failed to start', {
-      cause: err,
-    });
+    throw new Error('Container runtime is required but failed to start', { cause: err });
   }
 }
 
@@ -115,7 +110,7 @@ export function cleanupOrphans(): void {
     const orphans = output.trim().split('\n').filter(Boolean);
     for (const name of orphans) {
       try {
-        stopContainer(name);
+        execSync(stopContainer(name), { stdio: 'pipe' });
       } catch {
         /* already stopped */
       }
