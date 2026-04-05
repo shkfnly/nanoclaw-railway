@@ -18,7 +18,6 @@ import {
   IS_RAILWAY,
   TIMEZONE,
 } from './config.js';
-import { readEnvFile } from './env.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { collectPersistentMcpEnvVars } from './mcp-installer.js';
@@ -31,6 +30,7 @@ import {
   stopContainer,
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
+import { readEnvFile } from './env.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { runRailwayAgent } from './railway-runner.js';
 import { RegisteredGroup } from './types.js';

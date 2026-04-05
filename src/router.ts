@@ -31,21 +31,22 @@ export function formatMessages(
 export function formatThreadWithContext(
   threadMessages: NewMessage[],
   recentChannelMessages: NewMessage[],
-  timezone: string,
+  timezone?: string,
 ): string {
+  const tz = timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   // Filter out messages already in the thread to avoid duplicates
   const threadIds = new Set(threadMessages.map((m) => m.id));
   const contextOnly = recentChannelMessages.filter((m) => !threadIds.has(m.id));
 
   let result = '';
   if (contextOnly.length > 0) {
-    const contextLines = contextOnly.map(
-      (m) =>
-        `<message sender="${escapeXml(m.sender_name)}" time="${m.timestamp}">${escapeXml(m.content)}</message>`,
-    );
+    const contextLines = contextOnly.map((m) => {
+      const displayTime = formatLocalTime(m.timestamp, tz);
+      return `<message sender="${escapeXml(m.sender_name)}" time="${escapeXml(displayTime)}">${escapeXml(m.content)}</message>`;
+    });
     result += `<channel-context note="Recent channel activity for background awareness">\n${contextLines.join('\n')}\n</channel-context>\n`;
   }
-  result += formatMessages(threadMessages, timezone);
+  result += formatMessages(threadMessages, tz);
   return result;
 }
 

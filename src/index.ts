@@ -55,14 +55,19 @@ import {
   formatOutbound,
   formatThreadWithContext,
 } from './router.js';
-import { syncMcpOnStartup } from './mcp-installer.js';
-import { syncSkillsOnStartup } from './skill-installer.js';
+import {
+  restoreRemoteControl,
+  startRemoteControl,
+  stopRemoteControl,
+} from './remote-control.js';
 import {
   isSenderAllowed,
   isTriggerAllowed,
   loadSenderAllowlist,
   shouldDropMessage,
 } from './sender-allowlist.js';
+import { syncMcpOnStartup } from './mcp-installer.js';
+import { syncSkillsOnStartup } from './skill-installer.js';
 import { startSchedulerLoop } from './task-scheduler.js';
 import { Channel, NewMessage, RegisteredGroup } from './types.js';
 import { logger } from './logger.js';
@@ -507,10 +512,27 @@ function ensureContainerSystemRunning(): void {
 }
 
 async function main(): Promise<void> {
+  // On Railway, remove stale /data/.env if it exists.
+  // Secrets now come from Railway service config (process.env).
+  // The old .env may contain secrets written by the removed set_env_var tool.
+  if (IS_RAILWAY) {
+    const staleEnvPath = path.join(
+      process.env.RAILWAY_VOLUME_MOUNT_PATH || '/data',
+      '.env',
+    );
+    if (fs.existsSync(staleEnvPath)) {
+      fs.unlinkSync(staleEnvPath);
+      logger.info(
+        'Removed stale /data/.env — secrets now come from Railway service config',
+      );
+    }
+  }
+
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
   loadState();
+  restoreRemoteControl();
 
   // Sync skills from lock file (re-clones registered repos so skills
   // survive deploys and stay up-to-date with their source repos)
@@ -520,15 +542,19 @@ async function main(): Promise<void> {
   await syncMcpOnStartup();
 
   // Start credential proxy (containers route API calls through this)
-  const proxyServer = await startCredentialProxy(
-    CREDENTIAL_PROXY_PORT,
-    PROXY_BIND_HOST,
-  );
+  // On Railway, secrets are passed via stdin instead, so the proxy is a no-op guard.
+  let proxyServer: { close: () => void } | undefined;
+  if (!IS_RAILWAY) {
+    proxyServer = await startCredentialProxy(
+      CREDENTIAL_PROXY_PORT,
+      PROXY_BIND_HOST,
+    );
+  }
 
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
-    proxyServer.close();
+    proxyServer?.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -536,9 +562,60 @@ async function main(): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 
+  // Handle /remote-control and /remote-control-end commands
+  async function handleRemoteControl(
+    command: string,
+    chatJid: string,
+    msg: NewMessage,
+  ): Promise<void> {
+    const group = registeredGroups[chatJid];
+    if (!group?.isMain) {
+      logger.warn(
+        { chatJid, sender: msg.sender },
+        'Remote control rejected: not main group',
+      );
+      return;
+    }
+
+    const channel = findChannel(channels, chatJid);
+    if (!channel) return;
+
+    if (command === '/remote-control') {
+      const result = await startRemoteControl(
+        msg.sender,
+        chatJid,
+        process.cwd(),
+      );
+      if (result.ok) {
+        await channel.sendMessage(chatJid, result.url);
+      } else {
+        await channel.sendMessage(
+          chatJid,
+          `Remote Control failed: ${result.error}`,
+        );
+      }
+    } else {
+      const result = stopRemoteControl();
+      if (result.ok) {
+        await channel.sendMessage(chatJid, 'Remote Control session ended.');
+      } else {
+        await channel.sendMessage(chatJid, result.error);
+      }
+    }
+  }
+
   // Channel callbacks (shared by all channels)
   const channelOpts = {
     onMessage: (chatJid: string, msg: NewMessage) => {
+      // Remote control commands — intercept before storage
+      const trimmed = msg.content.trim();
+      if (trimmed === '/remote-control' || trimmed === '/remote-control-end') {
+        handleRemoteControl(trimmed, chatJid, msg).catch((err) =>
+          logger.error({ err, chatJid }, 'Remote control command error'),
+        );
+        return;
+      }
+
       // Sender allowlist drop mode: discard messages from denied senders before storing
       if (!msg.is_from_me && !msg.is_bot_message && registeredGroups[chatJid]) {
         const cfg = loadSenderAllowlist();
