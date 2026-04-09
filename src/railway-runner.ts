@@ -11,7 +11,6 @@ import {
   ASSISTANT_NAME,
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
-  CREDENTIAL_PROXY_PORT,
   DATA_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
@@ -22,13 +21,29 @@ import {
   ContainerOutput,
   readSecrets,
 } from './container-runner.js';
-import { detectAuthMode } from './credential-proxy.js';
 import { resolveGroupFolderPath, resolveGroupIpcPath } from './group-folder.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
+
+/** Build API credential env vars from the host's secrets. */
+function buildApiCredentialEnv(): Record<string, string> {
+  const secrets = readSecrets();
+  const env: Record<string, string> = {};
+  if (secrets.ANTHROPIC_BASE_URL) {
+    env.ANTHROPIC_BASE_URL = secrets.ANTHROPIC_BASE_URL;
+  }
+  if (secrets.ANTHROPIC_API_KEY) {
+    env.ANTHROPIC_API_KEY = secrets.ANTHROPIC_API_KEY;
+  } else if (secrets.CLAUDE_CODE_OAUTH_TOKEN) {
+    env.CLAUDE_CODE_OAUTH_TOKEN = secrets.CLAUDE_CODE_OAUTH_TOKEN;
+  } else if (secrets.ANTHROPIC_AUTH_TOKEN) {
+    env.ANTHROPIC_AUTH_TOKEN = secrets.ANTHROPIC_AUTH_TOKEN;
+  }
+  return env;
+}
 
 /**
  * Prepare workspace directories and settings (same as container-runner's
@@ -56,13 +71,23 @@ function prepareWorkspace(
 
   // Handle MAIN_GROUP_CLAUDE_MD env var (base64-encoded CLAUDE.md for the main group)
   // Credentials live here rather than in git. Unset after migration if desired.
-  if (!skipSync && group.folder === 'discord_main' && process.env.MAIN_GROUP_CLAUDE_MD) {
+  if (
+    !skipSync &&
+    group.folder === 'discord_main' &&
+    process.env.MAIN_GROUP_CLAUDE_MD
+  ) {
     const targetDir = path.join(GROUPS_DIR, group.folder);
     const targetMd = path.join(targetDir, 'CLAUDE.md');
     fs.mkdirSync(targetDir, { recursive: true });
-    const content = Buffer.from(process.env.MAIN_GROUP_CLAUDE_MD, 'base64').toString('utf-8');
+    const content = Buffer.from(
+      process.env.MAIN_GROUP_CLAUDE_MD,
+      'base64',
+    ).toString('utf-8');
     fs.writeFileSync(targetMd, content);
-    logger.info({ folder: group.folder, targetMd }, 'Wrote CLAUDE.md from MAIN_GROUP_CLAUDE_MD env var');
+    logger.info(
+      { folder: group.folder, targetMd },
+      'Wrote CLAUDE.md from MAIN_GROUP_CLAUDE_MD env var',
+    );
   }
 
   // Sync CLAUDE.md from image template (does not overwrite if env var already wrote it)
@@ -71,7 +96,12 @@ function prepareWorkspace(
     const targetMd = path.join(targetDir, 'CLAUDE.md');
     const templateMd = path.join(templateGroupsDir, folder, 'CLAUDE.md');
     // Skip if already written from env var
-    if (folder === group.folder && process.env.MAIN_GROUP_CLAUDE_MD && !skipSync) continue;
+    if (
+      folder === group.folder &&
+      process.env.MAIN_GROUP_CLAUDE_MD &&
+      !skipSync
+    )
+      continue;
     if (!skipSync && fs.existsSync(templateMd)) {
       fs.mkdirSync(targetDir, { recursive: true });
       let content = fs.readFileSync(templateMd, 'utf-8');
@@ -85,7 +115,11 @@ function prepareWorkspace(
   }
 
   // Sync conversations from image to volume (one-time migration, never overwrites)
-  const templateConvsDir = path.join(templateGroupsDir, group.folder, 'conversations');
+  const templateConvsDir = path.join(
+    templateGroupsDir,
+    group.folder,
+    'conversations',
+  );
   if (fs.existsSync(templateConvsDir)) {
     const targetConvsDir = path.join(GROUPS_DIR, group.folder, 'conversations');
     fs.mkdirSync(targetConvsDir, { recursive: true });
@@ -205,12 +239,9 @@ export async function runRailwayAgent(
         LOG_LEVEL: process.env.LOG_LEVEL || '',
         NODE_ENV: process.env.NODE_ENV || '',
         RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT || '',
-        // Route API traffic through the credential proxy (same as container-runner)
-        ANTHROPIC_BASE_URL: `http://127.0.0.1:${CREDENTIAL_PROXY_PORT}`,
-        // Mirror the host's auth method with a placeholder value
-        ...(detectAuthMode() === 'api-key'
-          ? { ANTHROPIC_API_KEY: 'placeholder' }
-          : { CLAUDE_CODE_OAUTH_TOKEN: 'placeholder' }),
+        // Pass real API credentials directly (no proxy needed — Railway
+        // has no container isolation, so there's nothing to proxy through)
+        ...buildApiCredentialEnv(),
       },
     });
 
