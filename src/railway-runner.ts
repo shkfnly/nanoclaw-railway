@@ -28,7 +28,11 @@ import { RegisteredGroup } from './types.js';
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
 
-/** Build API credential env vars from the host's secrets. */
+/** Build API credential env vars from the host's secrets.
+ *  The Claude Code SDK recognises ANTHROPIC_API_KEY and
+ *  CLAUDE_CODE_OAUTH_TOKEN.  ANTHROPIC_AUTH_TOKEN (legacy
+ *  Railway env var) is mapped to CLAUDE_CODE_OAUTH_TOKEN
+ *  so the SDK picks it up correctly. */
 function buildApiCredentialEnv(): Record<string, string> {
   const secrets = readSecrets();
   const env: Record<string, string> = {};
@@ -37,10 +41,13 @@ function buildApiCredentialEnv(): Record<string, string> {
   }
   if (secrets.ANTHROPIC_API_KEY) {
     env.ANTHROPIC_API_KEY = secrets.ANTHROPIC_API_KEY;
-  } else if (secrets.CLAUDE_CODE_OAUTH_TOKEN) {
-    env.CLAUDE_CODE_OAUTH_TOKEN = secrets.CLAUDE_CODE_OAUTH_TOKEN;
-  } else if (secrets.ANTHROPIC_AUTH_TOKEN) {
-    env.ANTHROPIC_AUTH_TOKEN = secrets.ANTHROPIC_AUTH_TOKEN;
+  } else {
+    // Map any OAuth token to the env var the SDK expects
+    const oauthToken =
+      secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
+    if (oauthToken) {
+      env.CLAUDE_CODE_OAUTH_TOKEN = oauthToken;
+    }
   }
   return env;
 }
