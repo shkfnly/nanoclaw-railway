@@ -30,7 +30,7 @@ import {
 } from './container-runtime.js';
 import { detectAuthMode } from './credential-proxy.js';
 import { readEnvFile } from './env.js';
-import { OneCLI } from '@onecli-sh/sdk';
+import { OneCLI } from './onecli-stub.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { runRailwayAgent } from './railway-runner.js';
 import { RegisteredGroup } from './types.js';
