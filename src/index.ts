@@ -610,6 +610,10 @@ function recoverPendingMessages(): void {
 }
 
 function ensureContainerSystemRunning(): void {
+  if (IS_RAILWAY) {
+    logger.info('Railway environment detected — skipping Docker runtime check (using railway-runner)');
+    return;
+  }
   ensureContainerRuntimeRunning();
   cleanupOrphans();
 }
